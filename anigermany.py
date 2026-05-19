@@ -662,6 +662,19 @@ nav{
   position:absolute;inset:0}
 .player-box{position:relative}
 
+/* ─── PROXY BADGE ─── */
+.proxy-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+  color: var(--cyan); font-size: 10px; font-weight: 600;
+  padding: 4px 10px; border-radius: 100px;
+  font-family: 'Space Mono', monospace; margin-left: 8px;
+}
+.proxy-badge .dot {
+  width: 6px; height: 6px; background: var(--green); border-radius: 50%;
+  box-shadow: 0 0 6px var(--green);
+}
+
 /* ─── RESPONSIVE ─── */
 @media(max-width:900px){
   .watch-main{grid-template-columns:1fr}
@@ -697,7 +710,11 @@ nav{
     <svg class="nav-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
     <input class="nav-search" id="global-search" placeholder="Search anime, movies, shows..." oninput="onGlobalSearch(this.value)" autocomplete="off"/>
   </div>
-  <div class="nav-right"></div>
+  <div class="nav-right">
+    <span class="proxy-badge" title="Using Cloudflare Proxy">
+      <span class="dot"></span> CORS Proxy Active
+    </span>
+  </div>
 </nav>
 
 <!-- ─── PAGES ─── -->
@@ -867,6 +884,9 @@ nav{
       Back
     </button>
     <div class="watch-nav-title" id="watch-nav-title"></div>
+    <span class="proxy-badge" id="watch-proxy-badge" style="display:none">
+      <span class="dot"></span> Proxy: foxy-doxy
+    </span>
   </div>
   <div class="watch-main">
     <div class="watch-left">
@@ -877,7 +897,8 @@ nav{
         </div>
         <div class="player-error" id="player-err"></div>
         <video id="hls-video" controls style="display:none"></video>
-        <iframe id="anime-iframe" allowfullscreen></iframe>
+        <iframe id="anime-iframe" allowfullscreen
+          referrerpolicy="no-referrer"></iframe>
       </div>
       <div class="anime-srv-bar" id="anime-srv-bar" style="display:none"></div>
       <div class="player-controls" id="player-controls" style="display:none">
@@ -903,6 +924,11 @@ nav{
 </div>
 
 <script>
+// ─────────────────────────────────────────────────────────────────────────────
+// EXTERNAL CORS PROXY (Cloudflare Worker)
+// ─────────────────────────────────────────────────────────────────────────────
+const EXTERNAL_PROXY = 'https://foxy-doxy.andruilsyestems.workers.dev';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -951,6 +977,24 @@ const ANIME_AL_SERVERS = [
 ];
 const ANIME_HLS_SERVER = { id:'videasy-hls', label:'Videasy HLS', icon:'🎬' };
 const DEFAULT_ANIME_SRV = 'mp-mal-sub';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROXY HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+function makeProxyUrl(upstreamUrl) {
+  const url = encodeURIComponent(btoa(upstreamUrl));
+  const hdrs = encodeURIComponent(btoa(JSON.stringify({
+    Referer: 'https://player.videasy.net/',
+    Origin: 'https://player.videasy.net'
+  })));
+  return `${EXTERNAL_PROXY}/proxy?url=${url}&headers=${hdrs}`;
+}
+
+// Show proxy is active in the watch navbar
+function showProxyActive() {
+  const badge = document.getElementById('watch-proxy-badge');
+  if (badge) badge.style.display = 'inline-flex';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NAV
@@ -1259,6 +1303,7 @@ async function openWatch(item) {
   document.getElementById('watch-nav-title').textContent = item.title;
   renderWatchInfo(item);
   resetPlayer();
+  showProxyActive(); // Show that we're using the external proxy
 
   const right = document.getElementById('watch-right');
 
@@ -1297,6 +1342,8 @@ function closeWatch() {
   document.getElementById('player-loading').style.display = 'flex';
   document.getElementById('player-controls').style.display = 'none';
   document.getElementById('extract-err-box').innerHTML = '';
+  const badge = document.getElementById('watch-proxy-badge');
+  if (badge) badge.style.display = 'none';
 }
 
 function resetPlayer() {
@@ -1543,7 +1590,7 @@ function playTvEp(epNum) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXTRACT & PLAY (USING THE PROXY: https://foxy-doxy.andruilsyestems.workers.dev/)
+// EXTRACT & PLAY
 // ─────────────────────────────────────────────────────────────────────────────
 async function extractAndPlay(url) {
   S.extracting = true;
@@ -1564,9 +1611,7 @@ async function extractAndPlay(url) {
     if (!res.ok) throw new Error(data.detail?.error || data.error || 'Extraction failed');
     if (!data.streams || !data.streams.length) throw new Error('No streams found');
     S.activeStream = data.streams[0];
-    // Use the custom proxy for fetching the stream
-    const proxyUrl = `https://foxy-doxy.andruilsyestems.workers.dev/?url=${encodeURIComponent(S.activeStream)}`;
-    mountPlayer(proxyUrl);
+    mountPlayer(makeProxyUrl(S.activeStream));
   } catch(e) {
     document.getElementById('player-loading').style.display = 'none';
     document.getElementById('extract-err-box').innerHTML = `
@@ -2152,6 +2197,7 @@ if __name__ == "__main__":
 ╠══════════════════════════════════════════════════════╣
 ║  Open:  http://localhost:{port:<28}║
 ║  TMDB:  Set TMDB_API_KEY env var for best results    ║
+║  Proxy: foxy-doxy.andruilsyestems.workers.dev        ║
 ╚══════════════════════════════════════════════════════╝
 """)
     uvicorn.run(app, host="0.0.0.0", port=port)
