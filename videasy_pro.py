@@ -1545,7 +1545,7 @@ function playTvEp(epNum) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXTRACT & PLAY
+// EXTRACT & PLAY (USING THE PROXY: https://foxy-doxy.andruilsyestems.workers.dev/)
 // ─────────────────────────────────────────────────────────────────────────────
 async function extractAndPlay(url) {
   S.extracting = true;
@@ -1566,22 +1566,15 @@ async function extractAndPlay(url) {
     if (!res.ok) throw new Error(data.detail?.error || data.error || 'Extraction failed');
     if (!data.streams || !data.streams.length) throw new Error('No streams found');
     S.activeStream = data.streams[0];
-    mountPlayer(makeProxyUrl(S.activeStream));
+    // Use the custom proxy for fetching the stream
+    const proxyUrl = `https://foxy-doxy.andruilsyestems.workers.dev/?url=${encodeURIComponent(S.activeStream)}`;
+    mountPlayer(proxyUrl);
   } catch(e) {
     document.getElementById('player-loading').style.display = 'none';
     document.getElementById('extract-err-box').innerHTML = `
       <div class="extract-error">✕ ${esc(e.message)}</div>`;
   }
   S.extracting = false;
-}
-
-function makeProxyUrl(u) {
-  const enc = encodeURIComponent(btoa(u));
-  const h = encodeURIComponent(btoa(JSON.stringify({
-    Referer:'https://player.videasy.net/',
-    Origin:'https://player.videasy.net'
-  })));
-  return `/api/proxy?url=${enc}&headers=${h}`;
 }
 
 const QUALITY_LS = 'sv_qual';
@@ -1805,54 +1798,6 @@ async def extract_videasy(player_url: str) -> dict:
             except Exception as e:
                 errors.append(f"{server}: {e}")
     raise ExtractorError("All servers failed.\n" + "\n".join(errors[-5:]))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# M3U8 PROXY
-# ──────────────────────────────────────────────────────────────────────────────
-
-PROXY_HEADERS = {
-    "Referer": "https://player.videasy.net/",
-    "Origin":  "https://player.videasy.net",
-    "User-Agent": DEFAULT_UA,
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "identity",
-}
-PASS_HEADERS = ["cache-control","etag","last-modified","content-range","accept-ranges"]
-
-
-def dec_param(value: str) -> str:
-    decoded = unquote(value)
-    try: return base64.b64decode(decoded).decode("utf-8")
-    except: return decoded
-
-def dec_headers(value: str) -> dict:
-    try: return json.loads(base64.b64decode(unquote(value)).decode("utf-8"))
-    except: return {}
-
-def proxy_url_for(api_base: str, base: str, url: str, extra: dict) -> str:
-    if not url.startswith("http"): url = urljoin(base, url)
-    e = quote(base64.b64encode(url.encode()).decode())
-    h = quote(base64.b64encode(json.dumps(extra).encode()).decode())
-    return f"{api_base}/proxy?url={e}&headers={h}"
-
-def rewrite_m3u8(content: str, base_url: str, extra: dict) -> str:
-    lines, out = content.splitlines(), []
-    for line in lines:
-        stripped = line.strip()
-        def repl(m):
-            inner = m.group(1)
-            return f'URI="{proxy_url_for("/api", base_url, inner, extra)}"' if (inner.startswith("http") or not inner.startswith("#")) else m.group(0)
-        line = re.sub(r'URI="([^"]+)"', repl, line)
-        if stripped and not stripped.startswith("#"):
-            line = proxy_url_for("/api", base_url, stripped, extra)
-        out.append(line)
-    return "\n".join(out)
-
-def is_m3u8(ct: str, url: str, body: bytes) -> bool:
-    path = url.split("?")[0].lower()
-    return "mpegurl" in ct.lower() or path.endswith(".m3u8") or path.endswith(".m3u") or body[:7] == b"#EXTM3U"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2173,40 +2118,6 @@ async def api_extract(body: ExtractRequest):
         raise HTTPException(status_code=code, detail={"error": msg})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
-
-# ── Proxy ────────────────────────────────────────────────────────────────────
-CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "*",
-}
-
-@app.options("/api/proxy")
-async def proxy_options():
-    return Response(status_code=204, headers=CORS)
-
-@app.get("/api/proxy")
-async def api_proxy(request: Request, url: str = Query(...), headers: str = Query(None)):
-    upstream_url  = dec_param(url)
-    extra_headers = dec_headers(headers) if headers else {}
-    range_hdr     = request.headers.get("range")
-    hdrs = {**PROXY_HEADERS, **extra_headers}
-    if range_hdr: hdrs["Range"] = range_hdr
-    try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            res  = await client.get(upstream_url, headers=hdrs)
-            body = res.content
-            ct   = res.headers.get("content-type", "application/octet-stream")
-            up   = dict(res.headers)
-            status = res.status_code
-    except Exception as e:
-        return Response(content=str(e).encode(), status_code=502, headers=CORS)
-    if is_m3u8(ct, upstream_url, body) and status == 200:
-        text = body.decode("utf-8", errors="replace")
-        body = rewrite_m3u8(text, upstream_url, extra_headers).encode("utf-8")
-        ct   = "application/vnd.apple.mpegurl"
-    extra = {k: up[k] for k in PASS_HEADERS if k in up}
-    return Response(content=body, status_code=status, media_type=ct, headers={**CORS, **extra})
 
 # ── Media search ─────────────────────────────────────────────────────────────
 @app.get("/api/media/search")
