@@ -877,9 +877,7 @@ nav{
         </div>
         <div class="player-error" id="player-err"></div>
         <video id="hls-video" controls style="display:none"></video>
-        <iframe id="anime-iframe" allowfullscreen
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-presentation"
-          referrerpolicy="no-referrer"></iframe>
+        <iframe id="anime-iframe" allowfullscreen></iframe>
       </div>
       <div class="anime-srv-bar" id="anime-srv-bar" style="display:none"></div>
       <div class="player-controls" id="player-controls" style="display:none">
